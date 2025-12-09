@@ -61,7 +61,7 @@ void process_morphology(ImageView<int> map, int field, bool find_max)
         int* line = (int*)((std::byte*)map.buffer + y * map.stride);
         for (int x = 0; x < map.width; x++)
         {
-            line[x] = get_neighborhood(copy_view, x, y, field, find_max);
+            line[x] = get_neighborhood(copy_view, x, y, find_max, field);
         }
     }
 
@@ -173,7 +173,11 @@ void maskage_cpp(ImageView<rgb8> in, ImageView<int> mask)
         int* mask_line = (int*)((std::byte*)mask.buffer + y * mask.stride);
         for (int x = 0; x < in.width; x++)
         {
-            line[x].r = uint8_t(line[x].r + 0.5 * line[x].r * mask_line[x]);
+            if (mask_line[x]) {
+                // input + 0.5 * red * masque
+                int val = line[x].r + 0.5 * 255;
+                line[x].r = (val > 255) ? 255 : val;
+            }
         }
     }
 }
@@ -194,30 +198,96 @@ void maskage_process_cpp(ImageView<rgb8> in, ImageView<int> mask)
 }
 
 
+bool alerting_process(const ImageView<int>& mask, int threshold_count)
+{
+    int count = 0;
+    for (int y = 0; y < mask.height; y++)
+    {
+        int* line = (int*)((std::byte*)mask.buffer + y * mask.stride);
+        for (int x = 0; x < mask.width; x++)
+        {
+            if (line[x] > 0) count++;
+        }
+    }
+    return count > threshold_count;
+}
+
 /// CPU Single threaded version of the Method
 void compute_cpp(ImageView<rgb8> in)
 {
-  for (int y = 0; y < in.height; ++y)
-  {
-    rgb8* lineptr = (rgb8*)((std::byte*)in.buffer + y * in.stride);
-    for (int x = 0; x < in.width; ++x)
+    static std::vector<rgb8> background;
+    static int bg_width = 0;
+    static int bg_height = 0;
+
+    // 1. Init Background (First frame only - No BEP update)
+    if (background.empty() || bg_width != in.width || bg_height != in.height)
     {
-      lineptr[x].r = 0; // Back out red component
-
-      if (x < logo_width && y < logo_height)
-      {
-        float alpha  = logo_data[y * logo_width + x] / 255.f;
-        lineptr[x].g = uint8_t(alpha * lineptr[x].g + (1 - alpha) * 255);
-        lineptr[x].b = uint8_t(alpha * lineptr[x].b + (1 - alpha) * 255);
-      }
+        bg_width = in.width;
+        bg_height = in.height;
+        background.resize(in.width * in.height);
+        
+        for (int y = 0; y < in.height; ++y)
+        {
+            rgb8* src_line = (rgb8*)((std::byte*)in.buffer + y * in.stride);
+            rgb8* dst_line = &background[y * in.width];
+            std::memcpy(dst_line, src_line, in.width * sizeof(rgb8));
+        }
     }
-  }
 
-  // You can fake a long-time process with sleep
-   {
-     using namespace std::chrono_literals;
-     std::this_thread::sleep_for(50ms);
-   }
+    // 2. Compute Difference (Change mask at t)
+    std::vector<int> diff_buffer(in.width * in.height);
+    ImageView<int> diff_map;
+    diff_map.buffer = diff_buffer.data();
+    diff_map.width = in.width;
+    diff_map.height = in.height;
+    diff_map.stride = in.width * sizeof(int);
+
+    for (int y = 0; y < in.height; ++y)
+    {
+        rgb8* img_line = (rgb8*)((std::byte*)in.buffer + y * in.stride);
+        rgb8* bg_line = &background[y * in.width];
+        int* diff_line = (int*)((std::byte*)diff_map.buffer + y * diff_map.stride);
+
+        for (int x = 0; x < in.width; ++x)
+        {
+            int diff = std::abs((int)img_line[x].r - (int)bg_line[x].r) +
+                       std::abs((int)img_line[x].g - (int)bg_line[x].g) +
+                       std::abs((int)img_line[x].b - (int)bg_line[x].b);
+            diff_line[x] = diff;
+        }
+    }
+
+    // 3. Clean change mask (Process)
+    noise_cancel_cpp(diff_map, 7); // Rayon 3 -> diameter 7
+    hesteresys_cpp(diff_map, 4, 30);
+    
+    // Binarize
+    for (int y = 0; y < diff_map.height; y++)
+    {
+        int* line = (int*)((std::byte*)diff_map.buffer + y * diff_map.stride);
+        for (int x = 0; x < diff_map.width; x++)
+        {
+            if (line[x] > 0) line[x] = 1;
+        }
+    }
+
+    // 4. Alerting process
+    bool alert = alerting_process(diff_map, 500); // Threshold 500 pixels
+
+    // 5. Visualization
+    maskage_cpp(in, diff_map);
+
+    // Alert indicator (Red border)
+    if (alert) {
+        for(int x=0; x<in.width; ++x) {
+            ((rgb8*)in.buffer)[x] = {255, 0, 0};
+            ((rgb8*)((std::byte*)in.buffer + (in.height-1)*in.stride))[x] = {255, 0, 0};
+        }
+        for(int y=0; y<in.height; ++y) {
+            ((rgb8*)((std::byte*)in.buffer + y*in.stride))[0] = {255, 0, 0};
+            ((rgb8*)((std::byte*)in.buffer + y*in.stride))[in.width-1] = {255, 0, 0};
+        }
+    }
 }
 
 
