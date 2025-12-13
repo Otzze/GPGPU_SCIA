@@ -22,10 +22,10 @@ target_link_libraries(Compute PRIVATE CUDA::cudart CUDA::curand)
 add_executable(stream src/stream.cpp src/gstfilter.c src/gstfilter.h)
 
 
-target_link_libraries(stream PUBLIC PkgConfig::GStreamerVideo cudart)
+target_link_libraries(stream PUBLIC PkgConfig::GStreamerVideo Compute CUDA::cudart)
 
 ## La beauté de NIX....
-target_link_libraries(stream PUBLIC $<TARGET_FILE:Compute>)
+# target_link_libraries(stream PUBLIC $<TARGET_FILE:Compute>)
 target_link_directories(stream PUBLIC "${CUDAToolkit_LIBRARY_DIR}")
 set_target_properties(stream PROPERTIES
   INSTALL_RPATH "${CUDAToolkit_LIBRARY_DIR}"
