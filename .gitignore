@@ -1,4 +1,6 @@
 *.i
+.cache
+build
 *.ii
 *.gpu
 *.ptx

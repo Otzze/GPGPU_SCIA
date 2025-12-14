@@ -1,0 +1,50 @@
+[
+{
+  "directory": "/home/asq/gpgpu/build",
+  "command": "/usr/bin/cc   -O3 -DNDEBUG -o CMakeFiles/stb_image.dir/src/stb_image.c.o -c /home/asq/gpgpu/src/stb_image.c",
+  "file": "/home/asq/gpgpu/src/stb_image.c",
+  "output": "CMakeFiles/stb_image.dir/src/stb_image.c.o"
+},
+{
+  "directory": "/home/asq/gpgpu/build",
+  "command": "/usr/bin/c++  -isystem /opt/cuda/targets/x86_64-linux/include  -W -Wall -O3 -DNDEBUG -std=gnu++20 -o CMakeFiles/Compute.dir/src/Compute.cpp.o -c /home/asq/gpgpu/src/Compute.cpp",
+  "file": "/home/asq/gpgpu/src/Compute.cpp",
+  "output": "CMakeFiles/Compute.dir/src/Compute.cpp.o"
+},
+{
+  "directory": "/home/asq/gpgpu/build",
+  "command": "/opt/cuda/bin/nvcc -forward-unknown-to-host-compiler  --options-file CMakeFiles/Compute.dir/includes_CUDA.rsp -O3 -DNDEBUG -std=c++20 \"--generate-code=arch=compute_52,code=[compute_52,sm_52]\" -x cu -c /home/asq/gpgpu/src/Compute.cu -o CMakeFiles/Compute.dir/src/Compute.cu.o",
+  "file": "/home/asq/gpgpu/src/Compute.cu",
+  "output": "CMakeFiles/Compute.dir/src/Compute.cu.o"
+},
+{
+  "directory": "/home/asq/gpgpu/build",
+  "command": "/usr/bin/cc  -isystem /opt/cuda/targets/x86_64-linux/include -O3 -DNDEBUG -o CMakeFiles/Compute.dir/src/logo.c.o -c /home/asq/gpgpu/src/logo.c",
+  "file": "/home/asq/gpgpu/src/logo.c",
+  "output": "CMakeFiles/Compute.dir/src/logo.c.o"
+},
+{
+  "directory": "/home/asq/gpgpu/build",
+  "command": "/usr/bin/c++  -isystem /opt/cuda/targets/x86_64-linux/include  -W -Wall -O3 -DNDEBUG -std=gnu++20 -o CMakeFiles/Compute.dir/src/background.cpp.o -c /home/asq/gpgpu/src/background.cpp",
+  "file": "/home/asq/gpgpu/src/background.cpp",
+  "output": "CMakeFiles/Compute.dir/src/background.cpp.o"
+},
+{
+  "directory": "/home/asq/gpgpu/build",
+  "command": "/opt/cuda/bin/nvcc -forward-unknown-to-host-compiler  --options-file CMakeFiles/Compute.dir/includes_CUDA.rsp -O3 -DNDEBUG -std=c++20 \"--generate-code=arch=compute_52,code=[compute_52,sm_52]\" -x cu -c /home/asq/gpgpu/src/background.cu -o CMakeFiles/Compute.dir/src/background.cu.o",
+  "file": "/home/asq/gpgpu/src/background.cu",
+  "output": "CMakeFiles/Compute.dir/src/background.cu.o"
+},
+{
+  "directory": "/home/asq/gpgpu/build",
+  "command": "/usr/bin/c++  -isystem /usr/include/gstreamer-1.0 -isystem /usr/include/glib-2.0 -isystem /usr/lib/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /usr/include/orc-0.4 -isystem /opt/cuda/targets/x86_64-linux/include  -W -Wall -O3 -DNDEBUG -std=gnu++20 -pthread -o CMakeFiles/stream.dir/src/stream.cpp.o -c /home/asq/gpgpu/src/stream.cpp",
+  "file": "/home/asq/gpgpu/src/stream.cpp",
+  "output": "CMakeFiles/stream.dir/src/stream.cpp.o"
+},
+{
+  "directory": "/home/asq/gpgpu/build",
+  "command": "/usr/bin/cc  -isystem /usr/include/gstreamer-1.0 -isystem /usr/include/glib-2.0 -isystem /usr/lib/glib-2.0/include -isystem /usr/include/sysprof-6 -isystem /usr/include/orc-0.4 -isystem /opt/cuda/targets/x86_64-linux/include -O3 -DNDEBUG -pthread -o CMakeFiles/stream.dir/src/gstfilter.c.o -c /home/asq/gpgpu/src/gstfilter.c",
+  "file": "/home/asq/gpgpu/src/gstfilter.c",
+  "output": "CMakeFiles/stream.dir/src/gstfilter.c.o"
+}
+]

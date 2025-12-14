@@ -12,13 +12,16 @@ static std::mt19937 randState;
 int find_matching_reservoir(rgb8 p, Reservoir* rs)
 {
     int m_idx = -1;
-    for (int i = 0; i < K; i++)
+    for (int i = 0; i < RESERVOIR_K; i++)
     {
         if (rs[i].w > 0)
         {
-            if (abs((int)p.r - (int)rs[i].rgb.r) < RGB_DIFF_THRESHOLD &&
-                abs((int)p.g - (int)rs[i].rgb.g) < RGB_DIFF_THRESHOLD &&
-                abs((int)p.b - (int)rs[i].rgb.b) < RGB_DIFF_THRESHOLD)
+            auto pi = (p.r*77 + p.g*150 + p.b*29) >> 8;
+            auto ri = (rs[i].rgb.r*77 + rs[i].rgb.g*150 + rs[i].rgb.b*29) >> 8;
+            // if (abs((int)p.r - (int)rs[i].rgb.r) < RGB_DIFF_THRESHOLD &&
+            //     abs((int)p.g - (int)rs[i].rgb.g) < RGB_DIFF_THRESHOLD &&
+            //     abs((int)p.b - (int)rs[i].rgb.b) < RGB_DIFF_THRESHOLD)
+            if (abs(pi - ri) < RGB_DIFF_THRESHOLD)
             {
                 m_idx = i;
                 return m_idx;
@@ -36,9 +39,9 @@ void background_removal_cpp(ImageView<rgb8> in) {
     if (reservoirs == nullptr) {
         g_width = in.width;
         g_height = in.height;
-        reservoirs = new Reservoir[g_width * g_height * K];
+        reservoirs = new Reservoir[g_width * g_height * RESERVOIR_K];
         // Initialize weights to 0
-        for (int i = 0; i < g_width * g_height * K; ++i) {
+        for (int i = 0; i < g_width * g_height * RESERVOIR_K; ++i) {
             reservoirs[i].w = 0;
         }
         std::random_device rd;
@@ -52,7 +55,7 @@ void background_removal_cpp(ImageView<rgb8> in) {
         rgb8* lineptr = (rgb8*)((std::byte*)in.buffer + y * in.stride);
         for (int x = 0; x < in.width; ++x)
         {
-            Reservoir* pixel_reservoirs = &reservoirs[(y * g_width + x) * K];
+            Reservoir* pixel_reservoirs = &reservoirs[(y * g_width + x) * RESERVOIR_K];
             rgb8 current_pixel = lineptr[x];
 
             int m_idx = find_matching_reservoir(current_pixel, pixel_reservoirs);
@@ -69,7 +72,7 @@ void background_removal_cpp(ImageView<rgb8> in) {
                 int min_idx = 0;
                 float min_weight = pixel_reservoirs[0].w;
                 float total_weights = pixel_reservoirs[0].w;
-                for (int i = 1; i < K; ++i) {
+                for (int i = 1; i < RESERVOIR_K; ++i) {
                     if (pixel_reservoirs[i].w < min_weight) {
                         min_weight = pixel_reservoirs[i].w;
                         min_idx = i;
@@ -86,7 +89,7 @@ void background_removal_cpp(ImageView<rgb8> in) {
             // cap weights to MAX_WEIGHTS
             float max_w = 0;
             int max_idx = 0;
-            for(int i = 0; i < K; ++i) {
+            for(int i = 0; i < RESERVOIR_K; ++i) {
                 if (pixel_reservoirs[i].w > MAX_WEIGHTS) {
                     pixel_reservoirs[i].w = MAX_WEIGHTS;
                 }

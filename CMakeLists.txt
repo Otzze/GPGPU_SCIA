@@ -1,5 +1,5 @@
 cmake_minimum_required (VERSION 3.18)
-project (PRPA)
+project (GPGPU)
 
 # Enable CUDA
 enable_language(CUDA)
@@ -13,21 +13,22 @@ pkg_check_modules(GStreamerVideo REQUIRED gstreamer-video-1.0 IMPORTED_TARGET)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -W -Wall")
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 
 add_library(stb_image src/stb_image.h src/stb_image.c)
 add_library(Compute src/Compute.cpp src/Compute.cu src/logo.c src/background.cpp src/background.cu)
-target_link_libraries(Compute PRIVATE CUDA::cudart CUDA::curand)
+target_link_libraries(Compute PRIVATE CUDA::cudart CUDA::curand stb_image)
 
 add_executable(stream src/stream.cpp src/gstfilter.c src/gstfilter.h)
 
 
-target_link_libraries(stream PUBLIC PkgConfig::GStreamerVideo Compute CUDA::cudart)
+target_link_libraries(stream PUBLIC PkgConfig::GStreamerVideo CUDA::cudart Compute)
 
 ## La beauté de NIX....
 # target_link_libraries(stream PUBLIC $<TARGET_FILE:Compute>)
-target_link_directories(stream PUBLIC "${CUDAToolkit_LIBRARY_DIR}")
-set_target_properties(stream PROPERTIES
-  INSTALL_RPATH "${CUDAToolkit_LIBRARY_DIR}"
-  BUILD_WITH_INSTALL_RPATH TRUE)
+# target_link_directories(stream PUBLIC "${CUDAToolkit_LIBRARY_DIR}")
+# set_target_properties(stream PROPERTIES
+#   INSTALL_RPATH "${CUDAToolkit_LIBRARY_DIR}"
+#   BUILD_WITH_INSTALL_RPATH TRUE)
 

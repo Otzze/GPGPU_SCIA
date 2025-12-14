@@ -1,0 +1,8 @@
+Tag,Mode,Duration_ms
+base_no_bep,cpu,87686
+base_bep,cpu,13467
+base_bep,cpu,11576
+base_bep,cpu,20924
+base_bep,cpu,26535
+base_bep_morph_opti,cpu,26544
+cuda_first,gpu,5063
