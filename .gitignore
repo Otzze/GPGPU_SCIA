@@ -1,4 +1,5 @@
 *.i
+profile
 .cache
 build
 *.ii

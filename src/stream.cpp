@@ -4,6 +4,19 @@
 #include <format>
 #include "gstfilter.h"
 #include "argh.h"
+#include <chrono>
+#include <atomic>
+
+std::atomic<uint64_t> frame_count = 0;
+
+static GstPadProbeReturn
+cb_have_data (GstPad *pad,
+              GstPadProbeInfo *info,
+              gpointer user_data)
+{
+  frame_count++;
+  return GST_PAD_PROBE_OK;
+}
 
 
 static gboolean
@@ -64,9 +77,9 @@ int main(int argc, char* argv[])
   const char* pipe_str;
   g_print("Output: %s\n", output.c_str());
   if (output.empty())
-    pipe_str = "filesrc name=fsrc ! decodebin ! videoconvert ! video/x-raw, format=(string)RGB ! myfilter ! videoconvert ! fpsdisplaysink sync=false";
+    pipe_str = "filesrc name=fsrc ! decodebin ! videoconvert ! video/x-raw, format=(string)RGB ! myfilter name=filter ! videoconvert ! fpsdisplaysink sync=false";
   else
-    pipe_str = "filesrc name=fsrc ! decodebin ! videoconvert ! video/x-raw, format=(string)RGB ! myfilter ! videoconvert ! video/x-raw, format=I420 ! x264enc ! mp4mux ! filesink name=fdst";
+    pipe_str = "filesrc name=fsrc ! decodebin ! videoconvert ! video/x-raw, format=(string)RGB ! myfilter name=filter ! videoconvert ! video/x-raw, format=I420 ! x264enc ! mp4mux ! filesink name=fdst";
 
 
 
@@ -89,12 +102,29 @@ int main(int argc, char* argv[])
     g_object_unref (filesink);
   }
 
+  auto filter = gst_bin_get_by_name(GST_BIN(pipeline), "filter");
+  if (filter) {
+    auto pad = gst_element_get_static_pad(filter, "src");
+    gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, cb_have_data, NULL, NULL);
+    gst_object_unref(pad);
+    gst_object_unref(filter);
+  }
+
+  auto start = std::chrono::steady_clock::now();
+
   // Start the pipeline
   gst_element_set_state(pipeline, GST_STATE_PLAYING);
 
   // Wait until error or EOS
   GstBus* bus = gst_element_get_bus(pipeline);
   GstMessage* msg = gst_bus_timed_pop_filtered(bus, GST_CLOCK_TIME_NONE, (GstMessageType)(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+
+  auto end = std::chrono::steady_clock::now();
+  std::chrono::duration<double> elapsed = end - start;
+
+  g_print("Total frames: %lu\n", frame_count.load());
+  g_print("Time elapsed: %.2f s\n", elapsed.count());
+  g_print("Average FPS: %.2f\n", frame_count.load() / elapsed.count());
 
   // Free resources
   if (msg != nullptr)

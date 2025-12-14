@@ -1,8 +1,8 @@
-Tag,Mode,Duration_ms
-base_no_bep,cpu,87686
-base_bep,cpu,13467
-base_bep,cpu,11576
-base_bep,cpu,20924
-base_bep,cpu,26535
-base_bep_morph_opti,cpu,26544
-cuda_first,gpu,5063
+Tag,Mode,nb_frames,avg_fps,Duration_ms
+base_no_bep,cpu,268,,87686
+base_bep_morph_opti,cpu,268,,26544
+cuda_first,gpu,268,,5063
+cuda_first,gpu,69,28.09,2829
+cuda_first,gpu,268,60.45,4907
+base_bep,cpu,69,9.95,7339
+base_bep,cpu,268,11.37,23883
