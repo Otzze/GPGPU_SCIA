@@ -1,4 +1,8 @@
 *.i
+*.sqlite
+*.html
+*.ncu-rep
+*.nsys-rep
 profile
 .cache
 build
