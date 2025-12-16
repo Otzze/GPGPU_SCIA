@@ -8,7 +8,9 @@ fi
 tag=$2
 if [ "$1" = "nsys" ]; then
     nsys profile \
-        --trace=cuda,cublas,osrt,nvtx \
+        --trace=cuda,osrt,nvtx \
+        --cuda-memory-usage=true \
+        --gpu-metrics-devices=all \
         --stats=true \
         --output="$tag" \
         $stream --mode=gpu samples/ACETx4.mp4 --output=test.mp4

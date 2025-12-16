@@ -13,6 +13,11 @@ typedef enum {
     GPU
 } e_device_t;
 
+struct Stats {
+    float sum;
+    float sum2;
+    int n;
+};
 
 typedef struct  {    
     e_device_t device;

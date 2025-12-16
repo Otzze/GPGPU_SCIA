@@ -1,21 +1,22 @@
 #include "Compute.hpp"
 #include "Image.hpp"
-#include "logo.h"
+#include "background.hpp"
 
-#include <algorithm>
-#include <chrono>
+#include <cmath>
 #include <cstring>
 #include <limits>
-#include <thread>
 #include <vector>
+
 
 /// Your cpp version of the algorithm
 /// This function is called by cpt_process_frame for each frame
 void compute_cpp(ImageView<rgb8> in);
 
+
 /// Your CUDA version of the algorithm
 /// This function is called by cpt_process_frame for each frame
 void compute_cu(ImageView<rgb8> in);
+
 
 int get_neighborhood(const ImageView<int>& img, int x, int y, bool find_max, int field = 3) {
     int extremum = find_max ? std::numeric_limits<int>::min() : std::numeric_limits<int>::max();
@@ -181,10 +182,29 @@ bool alerting_process(const ImageView<int>& mask, int threshold_count) {
     return count > threshold_count;
 }
 
-#include <iostream>
-#include "background.hpp"
+void find_thershold(const ImageView<int>& map, int &t_high, int &t_low) {
+    float sum = 0, sum2 = 0, n = 0;
+    for (int y = 0; y < map.height; y++) {
+        int* line = (int*)((std::byte*)map.buffer + y * map.stride);
+        for (int x = 0; x < map.width; x++) {
+            if (line[x] > 0) {
+                float v = (float)line[x] / 255;
+                sum += v;
+                sum2 += v * v;
+                n++;
+            }
+        }
+    }
+    if (n < 0.005 * map.width * map.height) {
+        t_high = t_low = 256;
+        return;
+    }
+    float m = sum / n;
+    float std = std::sqrt(sum2 / n - m*m);
+    t_high = 255 * std::max(m + 3.f * std, 0.15f);
+    t_low = t_high * 0.25f;
+}
 
-/// CPU Single threaded version of the Method
 void compute_cpp(ImageView<rgb8> in) {
     static Image<rgb8> background;
 
@@ -197,26 +217,6 @@ void compute_cpp(ImageView<rgb8> in) {
     }
     background_removal_cpp(background);
 
-    // static std::vector<rgb8> background;
-    // static int bg_width = 0;
-    // static int bg_height = 0;
-
-    // 1. Init Background (First frame only - No BEP update)
-    // if (background.empty() || bg_width != in.width || bg_height != in.height)
-    // {
-    //     bg_width = in.width;
-    //     bg_height = in.height;
-    //     background.resize(in.width * in.height);
-    //
-    //     for (int y = 0; y < in.height; ++y)
-    //     {
-    //         rgb8* src_line = (rgb8*)((std::byte*)in.buffer + y * in.stride);
-    //         rgb8* dst_line = &background[y * in.width];
-    //         std::memcpy(dst_line, src_line, in.width * sizeof(rgb8));
-    //     }
-    // }
-
-    // 2. Compute Difference (Change mask at t)
     static std::vector<int> diff_buffer;
     if (diff_buffer.size() < (size_t)(in.width * in.height)) {
         diff_buffer.resize(in.width * in.height);
@@ -229,7 +229,6 @@ void compute_cpp(ImageView<rgb8> in) {
 
     for (int y = 0; y < in.height; ++y) {
         rgb8* img_line = (rgb8*)((std::byte*)in.buffer + y * in.stride);
-        // rgb8* bg_line = &background[y * in.width];
         auto bg_line = (rgb8*)((std::byte*)background.buffer + y * in.stride);
         int* diff_line = (int*)((std::byte*)diff_map.buffer + y * diff_map.stride);
 
@@ -241,11 +240,11 @@ void compute_cpp(ImageView<rgb8> in) {
         }
     }
 
-    // 3. Clean change mask (Process)
-    noise_cancel_cpp(diff_map, 7);  // Rayon 3 -> diameter 7
-    hesteresys_cpp(diff_map, 4, 30);
+    noise_cancel_cpp(diff_map, 4);
+    int t_high, t_low;
+    find_thershold(diff_map, t_high, t_low);
+    hesteresys_cpp(diff_map, t_low, t_high);
 
-    // Binarize
     for (int y = 0; y < diff_map.height; y++) {
         int* line = (int*)((std::byte*)diff_map.buffer + y * diff_map.stride);
         for (int x = 0; x < diff_map.width; x++) {
@@ -254,13 +253,10 @@ void compute_cpp(ImageView<rgb8> in) {
         }
     }
 
-    // 4. Alerting process
-    bool alert = alerting_process(diff_map, 500);  // Threshold 500 pixels
+    bool alert = alerting_process(diff_map, 500);
 
-    // 5. Visualization
     maskage_cpp(in, diff_map);
 
-    // Alert indicator (Red border)
     if (alert) {
         for (int x = 0; x < in.width; ++x) {
             ((rgb8*)in.buffer)[x] = {255, 0, 0};
