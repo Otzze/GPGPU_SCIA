@@ -34,17 +34,52 @@ benchmark_agg_df = benchmark_df.groupby(['Tag', 'Mode']).agg(agg_functions).rese
 benchmark_agg_df['Tag_Mode'] = benchmark_agg_df['Tag'] + '_' + benchmark_agg_df['Mode']
 
 
-# --- Plot 1: Performance (AVG FPS) of all configurations ---
-fps_sorted = benchmark_agg_df.sort_values(by='avg_fps', ascending=True)
-plt.figure(figsize=(14, 10))
-plt.barh(fps_sorted['Tag_Mode'], fps_sorted['avg_fps'], color='skyblue')
-plt.xlabel('Average FPS (Higher is Better)')
-plt.ylabel('Configuration')
-plt.title('Performance Comparison: Average FPS')
-plt.tight_layout()
-plt.savefig('all_configs_fps.png')
-plt.close()
-print("Generated all_configs_fps.png")
+# --- Plot 1: Performance (AVG FPS) of configurations, grouped by number of frames ---
+fps_df = benchmark_agg_df.dropna(subset=['avg_fps', 'nb_frames'])
+unique_frame_counts_fps = fps_df['nb_frames'].unique()
+
+if len(unique_frame_counts_fps) > 0:
+    # If there's only one frame count, create a single plot.
+    if len(unique_frame_counts_fps) == 1:
+        frame_count = unique_frame_counts_fps[0]
+        fps_sorted = fps_df.sort_values(by='avg_fps', ascending=True)
+
+        plt.figure(figsize=(14, 10))
+        plt.barh(fps_sorted['Tag_Mode'], fps_sorted['avg_fps'], color='skyblue')
+        plt.xlabel('Average FPS (Higher is Better)')
+        plt.ylabel('Configuration')
+        plt.title(f'Performance Comparison: Average FPS ({int(frame_count)} frames)')
+        plt.tight_layout()
+        plt.savefig('all_configs_fps.png')
+        plt.close()
+
+    else: # Multiple frame counts, create subplots
+        unique_frame_counts_fps.sort() # Sort for deterministic order
+        
+        fig, axes = plt.subplots(nrows=len(unique_frame_counts_fps), ncols=1, figsize=(14, 8 * len(unique_frame_counts_fps)), squeeze=False)
+        axes = axes.flatten()
+
+        for i, frame_count in enumerate(unique_frame_counts_fps):
+            ax = axes[i]
+            df_for_plot = fps_df[fps_df['nb_frames'] == frame_count]
+            fps_sorted = df_for_plot.sort_values(by='avg_fps', ascending=True)
+            
+            if fps_sorted.empty:
+                continue
+
+            ax.barh(fps_sorted['Tag_Mode'], fps_sorted['avg_fps'], color='skyblue')
+            ax.set_xlabel('Average FPS (Higher is Better)')
+            ax.set_ylabel('Configuration')
+            ax.set_title(f'Video {i + 1} ({int(frame_count)} frames)')
+
+        fig.suptitle('Performance Comparison: Average FPS', fontsize=16)
+        fig.tight_layout(rect=[0, 0, 1, 0.98]) # Adjust layout to make room for suptitle
+        plt.savefig('all_configs_fps.png')
+        plt.close()
+    
+    print("Generated all_configs_fps.png")
+else:
+    print("Skipping FPS plot: No data with both avg_fps and nb_frames.")
 
 
 # --- Plot 2: Performance (Duration) of configurations, grouped by number of frames ---
