@@ -47,55 +47,52 @@ plt.close()
 print("Generated all_configs_fps.png")
 
 
-# --- Plot 2: Performance (Duration) of all configurations ---
-duration_sorted = benchmark_agg_df.dropna(subset=['Duration_ms']).sort_values(by='Duration_ms', ascending=False)
-plt.figure(figsize=(14, 10))
-plt.barh(duration_sorted['Tag_Mode'], duration_sorted['Duration_ms'], color='salmon')
-plt.xlabel('Execution Duration in ms (Lower is Better)')
-plt.ylabel('Configuration')
-plt.title('Performance Comparison: Execution Duration')
-plt.tight_layout()
-plt.savefig('all_configs_duration.png')
-plt.close()
-print("Generated all_configs_duration.png")
+# --- Plot 2: Performance (Duration) of configurations, grouped by number of frames ---
+duration_df = benchmark_agg_df.dropna(subset=['Duration_ms', 'nb_frames'])
+unique_frame_counts = duration_df['nb_frames'].unique()
 
-# --- Plot 3: GPU Optimization Progression (FPS) ---
-gpu_df = benchmark_agg_df[benchmark_agg_df['Mode'] == 'gpu'].copy()
-# Define a logical order for optimizations
-optimization_order = [
-    'cuda_first',
-    'opti_hyst_memcpy',
-    'opti_hyst_memcpy_v1',
-    'opti_alert_memcpy',
-    'opti_background',
-    'opti_shared_morph',
-    'opti_states_philox',
-    'opti_states_no_philox',
-    'opti_weights_uint8',
-    'opti_shared_background',
-    'opti_shared_hyst',
-    'opti_unroll_hyst',
-    'unroll_morph',
-    'final',
-    'final_128',
-    'final_128_k_15'
-]
-# Some tags in the data might not be in our defined order, and vice-versa
-# We will plot the ones that are in the data and in our order.
-gpu_df['Tag'] = pd.Categorical(gpu_df['Tag'], categories=optimization_order, ordered=True)
-gpu_opti_df = gpu_df.dropna(subset=['Tag']).sort_values('Tag')
+if len(unique_frame_counts) > 0:
+    # If there's only one frame count, create a single plot.
+    if len(unique_frame_counts) == 1:
+        frame_count = unique_frame_counts[0]
+        duration_sorted = duration_df.sort_values(by='Duration_ms', ascending=False)
+        
+        plt.figure(figsize=(14, 10))
+        plt.barh(duration_sorted['Tag_Mode'], duration_sorted['Duration_ms'], color='salmon')
+        plt.xlabel('Execution Duration in ms (Lower is Better)')
+        plt.ylabel('Configuration')
+        plt.title(f'Performance Comparison: Execution Duration ({int(frame_count)} frames)')
+        plt.tight_layout()
+        plt.savefig('all_configs_duration.png')
+        plt.close()
 
-plt.figure(figsize=(15, 8))
-plt.plot(gpu_opti_df['Tag'], gpu_opti_df['avg_fps'], marker='o', linestyle='-', color='g')
-plt.xlabel('Optimization Step')
-plt.ylabel('Average FPS')
-plt.title('GPU Performance Improvement Through Optimizations')
-plt.xticks(rotation=45, ha='right')
-plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-plt.tight_layout()
-plt.savefig('gpu_optimization_progression_fps.png')
-plt.close()
-print("Generated gpu_optimization_progression_fps.png")
+    else: # Multiple frame counts, create subplots
+        unique_frame_counts.sort() # Sort for deterministic order
+        
+        fig, axes = plt.subplots(nrows=len(unique_frame_counts), ncols=1, figsize=(14, 8 * len(unique_frame_counts)), squeeze=False)
+        axes = axes.flatten()
+
+        for i, frame_count in enumerate(unique_frame_counts):
+            ax = axes[i]
+            df_for_plot = duration_df[duration_df['nb_frames'] == frame_count]
+            duration_sorted = df_for_plot.sort_values(by='Duration_ms', ascending=False)
+            
+            if duration_sorted.empty:
+                continue
+
+            ax.barh(duration_sorted['Tag_Mode'], duration_sorted['Duration_ms'], color='salmon')
+            ax.set_xlabel('Execution Duration in ms (Lower is Better)')
+            ax.set_ylabel('Configuration')
+            ax.set_title(f'Video {i + 1}')
+
+        fig.suptitle('Performance Comparison: Execution Duration', fontsize=16)
+        fig.tight_layout(rect=[0, 0, 1, 0.98]) # Adjust layout to make room for suptitle
+        plt.savefig('all_configs_duration.png')
+        plt.close()
+    
+    print("Generated all_configs_duration.png")
+else:
+    print("Skipping duration plot: No data with both Duration_ms and nb_frames.")
 
 # --- Plot 4: CPU vs GPU Comparison ---
 cpu_tags = ['base_bep', 'cpu_opti_weights_uint8']
