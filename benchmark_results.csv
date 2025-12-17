@@ -30,3 +30,9 @@ final,gpu,268,75.23,3931
 final_128,gpu,268,72.68,3990
 final_128,gpu,268,73.99,3877
 final_128_k_15,gpu,268,74.97,3940
+roundabout,gpu,519,108.83,5104
+test,gpu,268,80.94,3635
+roundabout_randstate,gpu,519,109.47,5124
+roundabout_no_glob_vars,gpu,519,114.19,4856
+acet_no_glob_vars,gpu,268,81.38,3617
+acet_no_glob_vars,gpu,268,80.23,3568

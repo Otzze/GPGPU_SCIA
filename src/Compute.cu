@@ -6,13 +6,7 @@
 
 #define BLOCK_SIZE 128
 
-__device__ uint8_t* d_res_weights = nullptr;
-__device__ uchar4* d_res_colors = nullptr;
-__device__ int g_width_d = 0;
-__device__ int g_height_d = 0;
-__device__ curandState* randStates_d = nullptr;
-
-__device__  int find_matching_reservoir_shared(rgb8 p, uint8_t* s_weights, uchar4* s_colors, int tid) {
+__device__ int find_matching_reservoir_shared(rgb8 p, uint8_t* s_weights, uchar4* s_colors, int tid) {
     int m_idx = -1;
     for (int i = 0; i < RESERVOIR_K; i++) {
         int idx = i * BLOCK_SIZE + tid;
@@ -31,25 +25,7 @@ __device__  int find_matching_reservoir_shared(rgb8 p, uint8_t* s_weights, uchar
     return m_idx;
 }
 
-__device__  void load_reservoirs(int pixel_idx, int tid, int image_size, uint8_t* s_weights, uchar4* s_colors) {
-    for (int i = 0; i < RESERVOIR_K; ++i) {
-        int global_idx = i * image_size + pixel_idx;
-        int shared_idx = i * BLOCK_SIZE + tid;
-        s_weights[shared_idx] = d_res_weights[global_idx];
-        s_colors[shared_idx] = d_res_colors[global_idx];
-    }
-}
-
-__device__  void store_reservoirs(int pixel_idx, int tid, int image_size, uint8_t* s_weights, uchar4* s_colors) {
-    for (int i = 0; i < RESERVOIR_K; ++i) {
-        int global_idx = i * image_size + pixel_idx;
-        int shared_idx = i * BLOCK_SIZE + tid;
-        d_res_weights[global_idx] = s_weights[shared_idx];
-        d_res_colors[global_idx] = s_colors[shared_idx];
-    }
-}
-
-__device__  void update_match(int shared_idx, rgb8 current_pixel, uint8_t* s_weights, uchar4* s_colors) {
+__device__ void update_match(int shared_idx, rgb8 current_pixel, uint8_t* s_weights, uchar4* s_colors) {
     uint8_t w = s_weights[shared_idx];
 
     if (w > 0) {  // matching
@@ -70,11 +46,12 @@ __device__  void update_match(int shared_idx, rgb8 current_pixel, uint8_t* s_wei
     }
 }
 
-__device__  void replace_reservoir(int pixel_idx,
-                                         int tid,
-                                         rgb8 current_pixel,
-                                         uint8_t* s_weights,
-                                         uchar4* s_colors) {
+__device__ void replace_reservoir(int pixel_idx,
+                                  int tid,
+                                  rgb8 current_pixel,
+                                  uint8_t* s_weights,
+                                  uchar4* s_colors,
+                                  curandState* randStates) {
     int min_idx = 0;
     unsigned int total_weights = 0;
     uint8_t min_w = 255;
@@ -93,15 +70,15 @@ __device__  void replace_reservoir(int pixel_idx,
     }
 
     uint8_t min_weight = min_w;
-    curandState* localRandState = &randStates_d[pixel_idx];
-    if (curand_uniform(localRandState) * (float)total_weights >= (float)min_weight) {
+    curandState localRandState = randStates[pixel_idx];
+    if (curand_uniform(&localRandState) * (float)total_weights >= (float)min_weight) {
         int shared_min_idx = min_idx * BLOCK_SIZE + tid;
         s_weights[shared_min_idx] = 1;
         s_colors[shared_min_idx] = {current_pixel.r, current_pixel.g, current_pixel.b, 0};
     }
 }
 
-__device__  uchar4 get_background_color(int tid, uint8_t* s_weights, uchar4* s_colors) {
+__device__ uchar4 get_background_color(int tid, uint8_t* s_weights, uchar4* s_colors) {
     uint8_t max_w = 0;
     int max_idx = 0;
     for (int i = 0; i < RESERVOIR_K; ++i) {
@@ -123,7 +100,10 @@ __global__ void init_rand_states(int n, curandState* states) {
     }
 }
 
-__global__ void background_removal_kernel(ImageView<rgb8> in) {
+__global__ void background_removal_kernel(ImageView<rgb8> in,
+                                          uint8_t* weights,
+                                          uchar4* colors,
+                                          curandState* randStates) {
     __shared__ uint8_t s_weights[RESERVOIR_K * BLOCK_SIZE];
     __shared__ uchar4 s_colors[RESERVOIR_K * BLOCK_SIZE];
 
@@ -140,9 +120,14 @@ __global__ void background_removal_kernel(ImageView<rgb8> in) {
     int pixel_idx = 0;
     int image_size = 0;
 
-    pixel_idx = y * g_width_d + x;
-    image_size = g_width_d * g_height_d;
-    load_reservoirs(pixel_idx, tid, image_size, s_weights, s_colors);
+    pixel_idx = y * in.width + x;
+    image_size = in.width * in.height;
+    for (int i = 0; i < RESERVOIR_K; ++i) {
+        int global_idx = i * image_size + pixel_idx;
+        int shared_idx = i * BLOCK_SIZE + tid;
+        s_weights[shared_idx] = weights[global_idx];
+        s_colors[shared_idx] = colors[global_idx];
+    }
 
     rgb8* lineptr = (rgb8*)((std::byte*)in.buffer + y * in.stride);
     rgb8 current_pixel = lineptr[x];
@@ -152,44 +137,41 @@ __global__ void background_removal_kernel(ImageView<rgb8> in) {
     if (m_idx != -1) {
         update_match(m_idx * BLOCK_SIZE + tid, current_pixel, s_weights, s_colors);
     } else {
-        replace_reservoir(pixel_idx, tid, current_pixel, s_weights, s_colors);
+        replace_reservoir(pixel_idx, tid, current_pixel, s_weights, s_colors, randStates);
     }
 
     uchar4 bg = get_background_color(tid, s_weights, s_colors);
     lineptr[x] = {bg.x, bg.y, bg.z};
 
-    store_reservoirs(pixel_idx, tid, image_size, s_weights, s_colors);
+    for (int i = 0; i < RESERVOIR_K; ++i) {
+        int global_idx = i * image_size + pixel_idx;
+        int shared_idx = i * BLOCK_SIZE + tid;
+        weights[global_idx] = s_weights[shared_idx];
+        colors[global_idx] = s_colors[shared_idx];
+    }
 }
 
 void background_removal_cu(ImageView<rgb8> in) {
     static bool g_initialized = false;
+    static uint8_t* d_res_weights = nullptr;
+    static uchar4* d_res_colors = nullptr;
+    static curandState* randStates_d = nullptr;
 
     if (!g_initialized) {
-        float* d_weights_ptr = nullptr;
-        uchar4* d_colors_ptr = nullptr;
-
         int num_pixels = in.width * in.height;
         size_t weights_size = num_pixels * RESERVOIR_K * sizeof(uint8_t);
         size_t colors_size = num_pixels * RESERVOIR_K * sizeof(uchar4);
 
-        cudaMalloc((void**)&d_weights_ptr, weights_size);
-        cudaMemset(d_weights_ptr, 0, weights_size);
+        cudaMalloc(&d_res_weights, weights_size);
+        cudaMemset(d_res_weights, 0, weights_size);
 
-        cudaMalloc((void**)&d_colors_ptr, colors_size);
+        cudaMalloc(&d_res_colors, colors_size);
 
-        cudaMemcpyToSymbol(d_res_weights, &d_weights_ptr, sizeof(uint8_t*));
-        cudaMemcpyToSymbol(d_res_colors, &d_colors_ptr, sizeof(uchar4*));
-
-        curandState* d_rand_ptr = nullptr;
-        cudaMalloc((void**)&d_rand_ptr, num_pixels * sizeof(curandState));
-        cudaMemcpyToSymbol(randStates_d, &d_rand_ptr, sizeof(curandState*));
+        cudaMalloc(&randStates_d, num_pixels * sizeof(curandState));
 
         int block_size = 256;
         int grid_size = (num_pixels + block_size - 1) / block_size;
-        init_rand_states<<<grid_size, block_size>>>(num_pixels, d_rand_ptr);
-
-        cudaMemcpyToSymbol(g_width_d, &in.width, sizeof(int));
-        cudaMemcpyToSymbol(g_height_d, &in.height, sizeof(int));
+        init_rand_states<<<grid_size, block_size>>>(num_pixels, randStates_d);
 
         g_initialized = true;
     }
@@ -197,7 +179,7 @@ void background_removal_cu(ImageView<rgb8> in) {
     dim3 block(16, 8);
     dim3 grid((in.width + block.x - 1) / block.x, (in.height + block.y - 1) / block.y);
 
-    background_removal_kernel<<<grid, block>>>(in);
+    background_removal_kernel<<<grid, block>>>(in, d_res_weights, d_res_colors, randStates_d);
 }
 
 __global__ void reduce_stats_kernel(ImageView<int> map, Stats* partial_stats) {
@@ -266,7 +248,7 @@ __global__ void compute_difference_kernel(ImageView<rgb8> in, ImageView<rgb8> bg
         int dr = abs((int)in_line[x].r - (int)bg_line[x].r);
         int dg = abs((int)in_line[x].g - (int)bg_line[x].g);
         int db = abs((int)in_line[x].b - (int)bg_line[x].b);
-        
+
         diff_line[x] = dr + dg + db;
     }
 }
@@ -277,8 +259,7 @@ __global__ void compute_difference_kernel(ImageView<rgb8> in, ImageView<rgb8> bg
 #define SMEM_W (TILE_W + 2 * RADIUS)
 #define SMEM_H (TILE_H + 2 * RADIUS)
 
-template <bool IS_DILATION>
-__global__ void morphology_shared_kernel(ImageView<int> src, ImageView<int> dst) {
+__device__ void morphology_shared_kernel(ImageView<int> src, ImageView<int> dst, bool isDilation) {
     __shared__ int s_tile[SMEM_H][SMEM_W];
 
     int tx = threadIdx.x;
@@ -317,7 +298,7 @@ __global__ void morphology_shared_kernel(ImageView<int> src, ImageView<int> dst)
     __syncthreads();
 
     if (x < src.width && y < src.height) {
-        int val = IS_DILATION ? -2147483648 : 2147483647;
+        int val = isDilation ? -2147483648 : 2147483647;
 
 #pragma unroll
         for (int j = -RADIUS; j <= RADIUS; j++) {
@@ -325,7 +306,7 @@ __global__ void morphology_shared_kernel(ImageView<int> src, ImageView<int> dst)
             for (int i = -RADIUS; i <= RADIUS; i++) {
                 int neighbor_val = s_tile[ty + RADIUS + j][tx + RADIUS + i];
 
-                if (IS_DILATION) {
+                if (isDilation) {
                     if (neighbor_val > val)
                         val = neighbor_val;
                 } else {
@@ -340,7 +321,19 @@ __global__ void morphology_shared_kernel(ImageView<int> src, ImageView<int> dst)
     }
 }
 
-__global__ void calculate_thresholds_kernel(Stats* partials, int num_blocks, int total_pixels, int* d_thresholds, float* d_smoothed) {
+__global__ void dilation_kernel(ImageView<int> src, ImageView<int> dst) {
+    morphology_shared_kernel(src, dst, true);
+}
+
+__global__ void erosion_kernel(ImageView<int> src, ImageView<int> dst) {
+    morphology_shared_kernel(src, dst, false);
+}
+
+__global__ void calculate_thresholds_kernel(Stats* partials,
+                                            int num_blocks,
+                                            int total_pixels,
+                                            int* d_thresholds,
+                                            float* d_smoothed) {
     if (threadIdx.x == 0) {
         float total_sum = 0;
         float total_sum2 = 0;
@@ -359,15 +352,15 @@ __global__ void calculate_thresholds_kernel(Stats* partials, int num_blocks, int
             float m = total_sum / total_n;
             float std = sqrtf(total_sum2 / total_n - m * m);
             float current_high = 255.0f * (m + 2.0f * std);
-            
+
             if (current_high < 0.08f * 255.0f)
                 current_high = 0.08f * 255.0f;
-                
+
             float current_low = current_high * 0.5f;
 
             float smoothed_high = d_smoothed[0];
             float smoothed_low = d_smoothed[1];
-            
+
             if (smoothed_high < 0.0f) {
                 smoothed_high = current_high;
                 smoothed_low = current_low;
@@ -376,7 +369,7 @@ __global__ void calculate_thresholds_kernel(Stats* partials, int num_blocks, int
                 smoothed_high = alpha * smoothed_high + (1.0f - alpha) * current_high;
                 smoothed_low = alpha * smoothed_low + (1.0f - alpha) * current_low;
             }
-            
+
             d_smoothed[0] = smoothed_high;
             d_smoothed[1] = smoothed_low;
 
@@ -392,7 +385,7 @@ __global__ void calculate_thresholds_kernel(Stats* partials, int num_blocks, int
 __global__ void hysteresis_threshold_kernel(ImageView<int> map, int* d_thresholds) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    
+
     int low = d_thresholds[0];
     int high = d_thresholds[1];
 
@@ -536,8 +529,8 @@ void compute_cu(ImageView<rgb8> in) {
 
     compute_difference_kernel<<<grid, block>>>(device_in, device_bg, device_diff_map);
 
-    morphology_shared_kernel<false><<<grid, block>>>(device_diff_map, device_scratch_map);
-    morphology_shared_kernel<true><<<grid, block>>>(device_scratch_map, device_diff_map);
+    erosion_kernel<<<grid, block>>>(device_diff_map, device_scratch_map);
+    dilation_kernel<<<grid, block>>>(device_scratch_map, device_diff_map);
 
     static Stats* d_partials = nullptr;
     static Stats* h_partials = nullptr;
@@ -561,7 +554,7 @@ void compute_cu(ImageView<rgb8> in) {
         cudaMalloc(&d_thresholds, 2 * sizeof(int));
         cudaMalloc(&d_smoothed, 2 * sizeof(float));
     }
-    calculate_thresholds_kernel<<<1, 1>>>(d_partials, num_blocks, in.width*in.height, d_thresholds, d_smoothed);
+    calculate_thresholds_kernel<<<1, 1>>>(d_partials, num_blocks, in.width * in.height, d_thresholds, d_smoothed);
 
     hysteresis_threshold_kernel<<<grid, block>>>(device_diff_map, d_thresholds);
 
