@@ -2,7 +2,7 @@
 
 #include "Image.hpp"
 
-#define RESERVOIR_K 16
+#define RESERVOIR_K 10
 #define RGB_DIFF_THRESHOLD 1
 #define MAX_WEIGHTS 50
 

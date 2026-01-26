@@ -1,21 +1,24 @@
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
+#include <cstdio>
 #include "Compute.hpp"
 #include "Image.hpp"
 #include "background.hpp"
 
-#define BLOCK_SIZE 128
+#define BACK_W 16
+#define BACK_H 11
+#define BLOCK_SIZE BACK_H* BACK_W
 
-__device__ int find_matching_reservoir_shared(rgb8 p, uint8_t* s_weights, uchar4* s_colors, int tid) {
+__device__ int find_matching_reservoir_shared(rgb8 p, uint8_t* s_weights, rgb8* s_colors, int tid) {
     int m_idx = -1;
     for (int i = 0; i < RESERVOIR_K; i++) {
         int idx = i * BLOCK_SIZE + tid;
 
         if (s_weights[idx] > 0) {
-            uchar4 res_rgb = s_colors[idx];
-            if (abs((int)p.r - (int)res_rgb.x) < RGB_DIFF_THRESHOLD &&
-                abs((int)p.g - (int)res_rgb.y) < RGB_DIFF_THRESHOLD &&
-                abs((int)p.b - (int)res_rgb.z) < RGB_DIFF_THRESHOLD) {
+            rgb8 res_rgb = s_colors[idx];
+            if (abs((int)p.r - (int)res_rgb.r) < RGB_DIFF_THRESHOLD &&
+                abs((int)p.g - (int)res_rgb.g) < RGB_DIFF_THRESHOLD &&
+                abs((int)p.b - (int)res_rgb.b) < RGB_DIFF_THRESHOLD) {
                 return i;
             }
         } else {
@@ -25,7 +28,7 @@ __device__ int find_matching_reservoir_shared(rgb8 p, uint8_t* s_weights, uchar4
     return m_idx;
 }
 
-__device__ void update_match(int shared_idx, rgb8 current_pixel, uint8_t* s_weights, uchar4* s_colors) {
+__device__ void update_match(int shared_idx, rgb8 current_pixel, uint8_t* s_weights, rgb8* s_colors) {
     uint8_t w = s_weights[shared_idx];
 
     if (w > 0) {  // matching
@@ -35,23 +38,23 @@ __device__ void update_match(int shared_idx, rgb8 current_pixel, uint8_t* s_weig
         w = (uint8_t)new_w_int;
         s_weights[shared_idx] = w;
 
-        uchar4 res_rgb = s_colors[shared_idx];
-        res_rgb.x = (uint8_t)(((int)(w - 1) * res_rgb.x + (int)current_pixel.r) / (int)w);
-        res_rgb.y = (uint8_t)(((int)(w - 1) * res_rgb.y + (int)current_pixel.g) / (int)w);
-        res_rgb.z = (uint8_t)(((int)(w - 1) * res_rgb.z + (int)current_pixel.b) / (int)w);
+        rgb8 res_rgb = s_colors[shared_idx];
+        res_rgb.r = (uint8_t)(((int)(w - 1) * res_rgb.r + (int)current_pixel.r) / (int)w);
+        res_rgb.g = (uint8_t)(((int)(w - 1) * res_rgb.g + (int)current_pixel.g) / (int)w);
+        res_rgb.b = (uint8_t)(((int)(w - 1) * res_rgb.b + (int)current_pixel.b) / (int)w);
         s_colors[shared_idx] = res_rgb;
     } else {  // empty slot
         s_weights[shared_idx] = 1;
-        s_colors[shared_idx] = {current_pixel.r, current_pixel.g, current_pixel.b, 0};
+        s_colors[shared_idx] = {current_pixel.r, current_pixel.g, current_pixel.b};
     }
 }
 
-__device__ void replace_reservoir(int pixel_idx,
-                                  int tid,
-                                  rgb8 current_pixel,
-                                  uint8_t* s_weights,
-                                  uchar4* s_colors,
-                                  curandState* randStates) {
+__device__ int replace_reservoir(int pixel_idx,
+                                 int tid,
+                                 rgb8 current_pixel,
+                                 uint8_t* s_weights,
+                                 rgb8* s_colors,
+                                 curandState* randStates) {
     int min_idx = 0;
     unsigned int total_weights = 0;
     uint8_t min_w = 255;
@@ -74,11 +77,13 @@ __device__ void replace_reservoir(int pixel_idx,
     if (curand_uniform(&localRandState) * (float)total_weights >= (float)min_weight) {
         int shared_min_idx = min_idx * BLOCK_SIZE + tid;
         s_weights[shared_min_idx] = 1;
-        s_colors[shared_min_idx] = {current_pixel.r, current_pixel.g, current_pixel.b, 0};
+        s_colors[shared_min_idx] = {current_pixel.r, current_pixel.g, current_pixel.b};
+        return min_idx;
     }
+    return -1;
 }
 
-__device__ uchar4 get_background_color(int tid, uint8_t* s_weights, uchar4* s_colors) {
+__device__ rgb8 get_background_color(int tid, uint8_t* s_weights, rgb8* s_colors) {
     uint8_t max_w = 0;
     int max_idx = 0;
     for (int i = 0; i < RESERVOIR_K; ++i) {
@@ -102,10 +107,10 @@ __global__ void init_rand_states(int n, curandState* states) {
 
 __global__ void background_removal_kernel(ImageView<rgb8> in,
                                           uint8_t* weights,
-                                          uchar4* colors,
+                                          rgb8* colors,
                                           curandState* randStates) {
     __shared__ uint8_t s_weights[RESERVOIR_K * BLOCK_SIZE];
-    __shared__ uchar4 s_colors[RESERVOIR_K * BLOCK_SIZE];
+    __shared__ rgb8 s_colors[RESERVOIR_K * BLOCK_SIZE];
 
     int tx = threadIdx.x;
     int ty = threadIdx.y;
@@ -133,19 +138,22 @@ __global__ void background_removal_kernel(ImageView<rgb8> in,
     rgb8 current_pixel = lineptr[x];
 
     int m_idx = find_matching_reservoir_shared(current_pixel, s_weights, s_colors, tid);
+    int dirty_idx = -1;
 
     if (m_idx != -1) {
         update_match(m_idx * BLOCK_SIZE + tid, current_pixel, s_weights, s_colors);
+        dirty_idx = m_idx;
     } else {
-        replace_reservoir(pixel_idx, tid, current_pixel, s_weights, s_colors, randStates);
+        dirty_idx = replace_reservoir(pixel_idx, tid, current_pixel, s_weights, s_colors, randStates);
     }
 
-    uchar4 bg = get_background_color(tid, s_weights, s_colors);
-    lineptr[x] = {bg.x, bg.y, bg.z};
+    rgb8 bg = get_background_color(tid, s_weights, s_colors);
+    lineptr[x] = {bg.r, bg.g, bg.b};
 
-    for (int i = 0; i < RESERVOIR_K; ++i) {
-        int global_idx = i * image_size + pixel_idx;
-        int shared_idx = i * BLOCK_SIZE + tid;
+    // for (int i = 0; i < RESERVOIR_K; ++i) {
+    if (dirty_idx != -1) {
+        int global_idx = dirty_idx * image_size + pixel_idx;
+        int shared_idx = dirty_idx * BLOCK_SIZE + tid;
         weights[global_idx] = s_weights[shared_idx];
         colors[global_idx] = s_colors[shared_idx];
     }
@@ -154,13 +162,13 @@ __global__ void background_removal_kernel(ImageView<rgb8> in,
 void background_removal_cu(ImageView<rgb8> in) {
     static bool g_initialized = false;
     static uint8_t* d_res_weights = nullptr;
-    static uchar4* d_res_colors = nullptr;
+    static rgb8* d_res_colors = nullptr;
     static curandState* randStates_d = nullptr;
 
     if (!g_initialized) {
         int num_pixels = in.width * in.height;
         size_t weights_size = num_pixels * RESERVOIR_K * sizeof(uint8_t);
-        size_t colors_size = num_pixels * RESERVOIR_K * sizeof(uchar4);
+        size_t colors_size = num_pixels * RESERVOIR_K * sizeof(rgb8);
 
         cudaMalloc(&d_res_weights, weights_size);
         cudaMemset(d_res_weights, 0, weights_size);
@@ -176,7 +184,7 @@ void background_removal_cu(ImageView<rgb8> in) {
         g_initialized = true;
     }
 
-    dim3 block(16, 8);
+    dim3 block(BACK_W, BACK_H);
     dim3 grid((in.width + block.x - 1) / block.x, (in.height + block.y - 1) / block.y);
 
     background_removal_kernel<<<grid, block>>>(in, d_res_weights, d_res_colors, randStates_d);
@@ -401,7 +409,7 @@ __global__ void hysteresis_threshold_kernel(ImageView<int> map, int* d_threshold
     }
 }
 
-__global__ void hysteresis_propagate_kernel(ImageView<int> map) {
+__global__ void hysteresis_propagate_kernel(ImageView<int> map) { //, bool* changed) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -429,11 +437,90 @@ __global__ void hysteresis_propagate_kernel(ImageView<int> map) {
                     break;
             }
             if (has_strong_neighbor) {
+                // *changed = true;
                 line[x] = 255;
             }
         }
     }
 }
+
+// Compile with: nvcc -rdc=true ... (Relocatable Device Code is REQUIRED)
+
+__global__ void hysteresis_dynamic_kernel(ImageView<int> map, bool* d_changed) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int tid = threadIdx.y * blockDim.x + threadIdx.x;
+
+    // 1. Do the propagation work (same logic as before)
+    // Note: We don't check d_changed here, we just run.
+    if (x < map.width && y < map.height) {
+        int* line = (int*)((char*)map.buffer + y * map.stride);
+        if (line[x] == 128) {
+            // ... check neighbors ...
+            bool has_strong_neighbor = false;
+#pragma unroll
+            for (int dy = -1; dy <= 1; dy++) {
+#pragma unroll
+                for (int dx = -1; dx <= 1; dx++) {
+                    if (dx == 0 && dy == 0)
+                        continue;
+                    int nx = x + dx;
+                    int ny = y + dy;
+                    if (nx >= 0 && nx < map.width && ny >= 0 && ny < map.height) {
+                        int* n_line = (int*)((char*)map.buffer + ny * map.stride);
+                        if (n_line[nx] == 255) {
+                            has_strong_neighbor = true;
+                            break;
+                        }
+                    }
+                }
+                if (has_strong_neighbor)
+                    break;
+            }
+            if (has_strong_neighbor) {
+                line[x] = 255;
+                // printf("pipi\n");
+                *d_changed = true;  // Mark that we need another pass
+            }
+        }
+    }
+
+    // 2. Global Sync (Implicit)
+    // We cannot sync the whole grid inside a kernel.
+    // The "sync" happens because this kernel will FINISH before the next one starts.
+
+    // 3. Tail Launch (Only Thread 0 of Block 0 does this)
+    // if (x == 0 && y == 0 && tid == 0) {
+    //     // Safety break and Flag check
+    //     if (has) {
+    //         // Reset flag for the NEXT run
+    //         *d_changed = false;
+    //
+    //         // LAUNCH NEXT ITERATION
+    //         // We use the same grid/block dims.
+    //         // This is a "Fire and Forget" launch.
+    //         // cudaError_t err = cudaSuccess;
+    //         hysteresis_dynamic_kernel<<<gridDim, blockDim>>>(map, d_changed, iter_count + 1, max_iters);
+    //         // err = cudaGetLastError();
+    //         // if (err != cudaSuccess) {
+    //         //     printf("child launch failed: %s\n", cudaGetErrorString(err));
+    //         // }
+    //
+    //     }
+    // }
+}
+
+// __global__ void hysteresis_manager(ImageView<int> map, bool* d_changed, int iter, int max_iter) {
+//     if (*d_changed && iter < max_iter) {
+//         *d_changed = false;
+//         dim3 block(16, 16);
+//         dim3 grid((map.width + block.x - 1) / block.x, (map.height + block.y - 1) / block.y);
+//         hysteresis_dynamic_kernel<<<grid, block, 0, cudaStreamTailLaunch>>>(map, d_changed);
+//         hysteresis_manager<<<1, 1, 0, cudaStreamTailLaunch>>>(map, d_changed, iter + 1, max_iter);
+//     } else {
+//         printf("flag: %d, iter: %d\n", *d_changed, iter);
+//     }
+// }
 
 __global__ void hysteresis_cleanup_kernel(ImageView<int> map) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -511,6 +598,8 @@ void compute_cu(ImageView<rgb8> in) {
     static Image<int> device_scratch_map;
 
     if (device_in.width != in.width || device_in.height != in.height) {
+        // cudaDeviceSetLimit(cudaLimitDevRuntimeSyncDepth, 1000);
+        // cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, 32768);
         device_in = Image<rgb8>(in.width, in.height, true);
         device_bg = Image<rgb8>(in.width, in.height, true);
         device_diff_map = Image<int>(in.width, in.height, true);
@@ -558,9 +647,48 @@ void compute_cu(ImageView<rgb8> in) {
 
     hysteresis_threshold_kernel<<<grid, block>>>(device_diff_map, d_thresholds);
 
+    // static bool* h_flag = nullptr;
+    // static bool* d_changed = nullptr;
+    // if (d_changed == nullptr)
+    // cudaMalloc(&d_changed, sizeof(bool));
+    // if (h_flag == nullptr) {
+    //     cudaHostAlloc((void**)&h_flag, sizeof(bool), cudaHostAllocMapped);
+    //     cudaHostGetDevicePointer((void**)&d_changed, h_flag, 0);
+    // }
+    //
+    // *h_flag = false;
+    // cudaMemcpy(d_changed, &h_changed, sizeof(bool), cudaMemcpyHostToDevice);
+
     for (int i = 0; i < 30; i++) {
-        hysteresis_propagate_kernel<<<grid, block>>>(device_diff_map);
+        // *h_changed = false;
+        // printf("iter: %d\n", i);
+        hysteresis_propagate_kernel<<<grid, block>>>(device_diff_map); // d_changed);
+        // hysteresis_propagate_kernel<<<grid, block>>>(device_diff_map);
+        // if (i % 5 == 0) {
+        //     cudaDeviceSynchronize();
+        //     // cudaMemcpy(&h_changed, d_changed, sizeof(bool), cudaMemcpyDeviceToHost);
+        //     if (!*h_flag)
+        //         break;
+        // }
+        // cudaDeviceSynchronize();
     }
+    // // if (h_flag == nullptr) {
+    // //     cudaHostAlloc((void**)&h_flag, sizeof(bool), cudaHostAllocMapped);
+    // //     cudaHostGetDevicePointer((void**)&d_changed, h_flag, 0);
+    // // }
+    // bool h_flag = false;
+    // if (d_changed == nullptr)
+    //     cudaMalloc(&d_changed, sizeof(bool));
+    // cudaMemset(d_changed, h_flag, sizeof(bool));
+    //
+    //
+    // cudaStream_t stream;
+    // cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
+    //
+    // hysteresis_dynamic_kernel<<<grid, block>>>(device_diff_map, d_changed);
+    // hysteresis_manager<<<1, 1, 0, stream>>>(device_diff_map, d_changed, 0, 1000);
+
+    // cudaStreamDestroy(stream);
 
     hysteresis_cleanup_kernel<<<grid, block>>>(device_diff_map);
 

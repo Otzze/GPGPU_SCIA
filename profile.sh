@@ -18,5 +18,5 @@ else
     sudo ncu \
         --set full \
         -o "$tag" \
-        $stream --mode=gpu samples/ACETx4.mp4 --output=test.mp4
+        $stream --mode=gpu samples/ACETx10.mp4 --output=test.mp4
 fi

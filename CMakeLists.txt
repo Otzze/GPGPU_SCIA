@@ -18,6 +18,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_library(stb_image src/stb_image.h src/stb_image.c)
 add_library(Compute src/Compute.cpp src/Compute.cu src/logo.c src/background.cpp)
 target_link_libraries(Compute PRIVATE CUDA::cudart CUDA::curand stb_image)
+# set_target_properties(Compute PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
 add_executable(stream src/stream.cpp src/gstfilter.c src/gstfilter.h)
 
